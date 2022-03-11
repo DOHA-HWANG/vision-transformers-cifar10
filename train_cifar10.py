@@ -1,11 +1,10 @@
-# -*- coding: utf-8 -*-
-'''
+# Reference Codes
+# https://github.com/kentaroy47/vision-transformers-cifar10
+# https://github.com/FrancescoSaverioZuppichini/ViT
+# https://github.com/lucidrains/vit-pytorch
 
-Train CIFAR10 with PyTorch and Vision Transformers!
-written by @kentaroy47, @arutema47
 
-'''
-
+#Lib import
 from __future__ import print_function
 
 import torch
@@ -24,11 +23,14 @@ import pandas as pd
 import csv
 import time
 
+from torchvision.utils import save_image
+
 from models import *
 from models.vit import ViT
 from utils import progress_bar
 from models.convmixer import ConvMixer
-from randomaug import RandAugment
+
+from dataset import my_Cifar10
 
 # parsers
 parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
@@ -45,9 +47,12 @@ parser.add_argument('--n_epochs', type=int, default='50')
 parser.add_argument('--patch', default='4', type=int)
 parser.add_argument('--convkernel', default='8', type=int)
 parser.add_argument('--cos', action='store_false', help='Train with cosine annealing scheduling')
+# parser.add_argument('--dataset', default="cifar10")
 
 args = parser.parse_args()
 
+# Use wandb for visualize & debug
+# User guide(Korean): https://greeksharifa.github.io/references/2020/06/10/wandb-usage/
 # take in args
 import wandb
 watermark = "{}_lr{}".format(args.net, args.lr)
@@ -58,6 +63,8 @@ wandb.init(project="cifar10-challange",
            name=watermark)
 wandb.config.update(args)
 
+# Use albumentations for image augmentations
+# User guide(Korean): https://hoya012.github.io/blog/albumentation_tutorial/
 if args.aug:
     import albumentations
 bs = int(args.bs)
@@ -65,42 +72,30 @@ imsize = int(args.size)
 
 use_amp = args.amp
 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-best_acc = 0  # best test accuracy
-start_epoch = 0  # start from epoch 0 or last checkpoint epoch
-
-# Data
-print('==> Preparing data..')
-if args.net=="vit_timm":
+if args.net=="vit_timm_large":
     size = 384
+elif args.net=="vit_timm_small" or args.net=="vit_timm_base":
+    size = 224
 else:
     size = imsize
-transform_train = transforms.Compose([
-    transforms.RandomCrop(32, padding=4),
-    transforms.Resize(size),
-    transforms.RandomHorizontalFlip(),
-    transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-])
 
-transform_test = transforms.Compose([
-    transforms.Resize(size),
-    transforms.ToTensor(),
-    transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-])
+# Load dataset
+train_dataset, test_dataset, train_dataloader, test_dataloader = my_Cifar10(imageSize=size, aug=args.aug)
 
-# Add RandAugment with N, M(hyperparameter)
-if args.aug:  
-    N = 2; M = 14;
-    transform_train.transforms.insert(0, RandAugment(N, M))
+print('train_dataset', len(train_dataset))
+print('test_dataset', len(test_dataset))
 
-trainset = torchvision.datasets.CIFAR10(root='./data', train=True, download=True, transform=transform_train)
-trainloader = torch.utils.data.DataLoader(trainset, batch_size=bs, shuffle=True, num_workers=8)
+classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog',  'frog', 'horse', 'ship', 'truck')
 
-testset = torchvision.datasets.CIFAR10(root='./data', train=False, download=True, transform=transform_test)
-testloader = torch.utils.data.DataLoader(testset, batch_size=100, shuffle=False, num_workers=8)
+# Check sample image
+dataiter = iter(train_dataloader)
+images, labels = dataiter.next()
 
-classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+print(images.shape)
+img1 = images[0]
+print('label', classes[labels[0]])
+save_image(img1, "./visualize/cifar10_sample1_{}.png".format(classes[labels[0]]))
+
 
 # Model
 print('==> Building model..')
@@ -131,15 +126,30 @@ elif args.net=="vit":
     dropout = 0.1,
     emb_dropout = 0.1
 )
-elif args.net=="vit_timm":
+elif args.net=="vit_timm_large" or args.net=="vit_timm_base" or args.net=="vit_timm_small":
     import timm
-    net = timm.create_model("vit_large_patch16_384", pretrained=True)
-    net.head = nn.Linear(net.head.in_features, 10)
+    print("Available Vision Transformer Models: ")
+    print(timm.list_models("vit*"))
+    if args.net=="vit_timm_base":
+        net = timm.create_model("vit_base_patch16_224", pretrained=True)
+    elif args.net=="vit_timm_small":
+        net = timm.create_model("vit_small_patch16_224", pretrained=True)
+    elif args.net=="vit_timm_large":
+        net = timm.create_model("vit_large_patch16_384", pretrained=True)
 
+    net.head = nn.Linear(net.head.in_features, 10)
+    
+
+# Device configuration
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(device)
+
+best_acc = 0  # best test accuracy
+start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 net = net.to(device)
-if device == 'cuda':
-    net = torch.nn.DataParallel(net) # make parallel
-    cudnn.benchmark = True
+# if device == 'cuda':
+#     net = torch.nn.DataParallel(net) # make parallel
+#     cudnn.benchmark = True
 
 if args.resume:
     # Load checkpoint.
@@ -150,6 +160,7 @@ if args.resume:
     best_acc = checkpoint['acc']
     start_epoch = checkpoint['epoch']
 
+ 
 # Loss is CE
 criterion = nn.CrossEntropyLoss()
 
@@ -157,7 +168,8 @@ if args.opt == "adam":
     optimizer = optim.Adam(net.parameters(), lr=args.lr)
 elif args.opt == "sgd":
     optimizer = optim.SGD(net.parameters(), lr=args.lr)  
-    
+
+
 # use cosine or reduce LR on Plateau scheduling
 if not args.cos:
     from torch.optim import lr_scheduler
@@ -168,7 +180,8 @@ else:
 if args.cos:
     wandb.config.scheduler = "cosine"
 else:
-    wandb.config.scheduler = "ReduceLROnPlateau"
+    wandb.config.scheduler = "ReduceLROnPlateau" 
+    
 
 ##### Training
 scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
@@ -178,7 +191,7 @@ def train(epoch):
     train_loss = 0
     correct = 0
     total = 0
-    for batch_idx, (inputs, targets) in enumerate(trainloader):
+    for batch_idx, (inputs, targets) in enumerate(train_dataloader):
         inputs, targets = inputs.to(device), targets.to(device)
         # Train with amp
         with torch.cuda.amp.autocast(enabled=use_amp):
@@ -194,7 +207,7 @@ def train(epoch):
         total += targets.size(0)
         correct += predicted.eq(targets).sum().item()
 
-        progress_bar(batch_idx, len(trainloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
+        progress_bar(batch_idx, len(train_dataloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
             % (train_loss/(batch_idx+1), 100.*correct/total, correct, total))
     return train_loss/(batch_idx+1)
 
@@ -206,7 +219,7 @@ def test(epoch):
     correct = 0
     total = 0
     with torch.no_grad():
-        for batch_idx, (inputs, targets) in enumerate(testloader):
+        for batch_idx, (inputs, targets) in enumerate(test_dataloader):
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = net(inputs)
             loss = criterion(outputs, targets)
@@ -216,7 +229,7 @@ def test(epoch):
             total += targets.size(0)
             correct += predicted.eq(targets).sum().item()
 
-            progress_bar(batch_idx, len(testloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
+            progress_bar(batch_idx, len(test_dataloader), 'Loss: %.3f | Acc: %.3f%% (%d/%d)'
                 % (test_loss/(batch_idx+1), 100.*correct/total, correct, total))
     
     # Update scheduler
@@ -270,4 +283,3 @@ for epoch in range(start_epoch, args.n_epochs):
 
 # writeout wandb
 wandb.save("wandb_{}.h5".format(args.net))
-    
