@@ -2,6 +2,7 @@
 1. https://github.com/kentaroy47/vision-transformers-cifar10
 2. https://github.com/FrancescoSaverioZuppichini/ViT
 3. https://github.com/lucidrains/vit-pytorch
+4. https://github.com/facebookresearch/deit
 # vision-transformers-cifar10
 Let's train vision transformers for cifar 10! 
 
