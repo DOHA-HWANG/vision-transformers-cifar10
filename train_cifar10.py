@@ -37,7 +37,7 @@ parser = argparse.ArgumentParser(description='PyTorch CIFAR10 Training')
 parser.add_argument('--lr', default=1e-3, type=float, help='learning rate') # resnets.. 1e-3, Vit..1e-4?
 parser.add_argument('--opt', default="adam")
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
-parser.add_argument('--aug', action='store_true', help='use randomaug')
+parser.add_argument('--aug', action='store_true', help='use randomaug')  # store_true : False
 parser.add_argument('--amp', action='store_true', help='enable AMP training')
 parser.add_argument('--mixup', action='store_true', help='add mixup augumentations')
 parser.add_argument('--net', default='vit')
@@ -65,6 +65,7 @@ wandb.config.update(args)
 
 # Use albumentations for image augmentations
 # User guide(Korean): https://hoya012.github.io/blog/albumentation_tutorial/
+print('aug: ', args.aug)
 if args.aug:
     import albumentations
 bs = int(args.bs)
@@ -150,7 +151,7 @@ net = net.to(device)
 # if device == 'cuda':
 #     net = torch.nn.DataParallel(net) # make parallel
 #     cudnn.benchmark = True
-
+print('resume: ', args.resume)
 if args.resume:
     # Load checkpoint.
     print('==> Resuming from checkpoint..')
