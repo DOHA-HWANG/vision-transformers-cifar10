@@ -1,7 +1,5 @@
 # Reference Codes
-20220317: add DeiT based on facebook github
-ViT on cifar10 (no pretrained dataset): 78.86 % acc
-DeiT on cifar10 (no pretrained dataset): 80.16 % acc
+  20220317: add DeiT based on facebook github, ViT on cifar10 (no pretrained dataset): 78.86 % acc vs DeiT on cifar10 (no pretrained dataset): 80.16 % acc
 1. https://github.com/kentaroy47/vision-transformers-cifar10
 2. https://github.com/FrancescoSaverioZuppichini/ViT
 3. https://github.com/lucidrains/vit-pytorch
