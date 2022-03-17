@@ -4,7 +4,9 @@ import torch
 import torch.nn.functional as F
 from einops import rearrange
 from torch import nn
-#import pdb
+# import pdb
+from collections import OrderedDict
+
 
 MIN_NUM_PATCHES = 16
 
@@ -110,9 +112,11 @@ class Transformer(nn.Module):
             x = ff(x)
         return x
 
-
+# Add deit: refer to https://github.com/rwightman/pytorch-image-models/blob/master/timm/models/vision_transformer.py
+# representation_size (Optional[int]): enable and set representation layer (pre-logits) to this value if set
 class ViT(nn.Module):
-    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, channels = 3, dropout = 0., emb_dropout = 0.):
+    def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, channels = 3, dropout = 0., emb_dropout = 0.
+                , distilled=False):
         super().__init__()
         
         ##### Patch Embedding instants #####
@@ -124,19 +128,33 @@ class ViT(nn.Module):
         self.patch_size = patch_size  # default patch size = 16( == 4*4)
         # print('patch size: ', patch_size)  # 4 (for cifar10)
 
-        self.pos_embedding = nn.Parameter(torch.randn(1, num_patches + 1, dim))  # Epos: (num_patches + 1) * D; (total patchs + class token) * D
+        self.num_tokens = 2 if distilled else 1
+        
+        self.distilled = distilled
+
+        self.pos_embedding = nn.Parameter(torch.randn(1, num_patches + self.num_tokens, dim))  # Epos: (num_patches + 1) * D; (total patchs + class token) * D
         # print("self.pos_embedding: ",self.pos_embedding.shape)  # torch.Size([1, 65 (N + 1), 512])
         self.patch_to_embedding = nn.Linear(patch_dim, dim)  # linear projection: P^2 * C ---> target dim (512)
         # print("self.patch_to_embedding: ",self.patch_to_embedding)  # Linear(in_features=48 (4*4*3), out_features=512, bias=True)
         self.cls_token = nn.Parameter(torch.randn(1, 1, dim))  # define cls token as 1 * dim
         # print("self.cls_token: ",self.cls_token.shape)  # torch.Size([1, 1, 512])
+        self.dist_token = nn.Parameter(torch.zeros(1, 1, dim)) if distilled else None
         ##### Patch Embedding instants #####
         
         self.dropout = nn.Dropout(emb_dropout)
 
         self.transformer = Transformer(dim, depth, heads, mlp_dim, dropout)
 
-        self.to_cls_token = nn.Identity()
+        # self.to_cls_token = nn.Identity()
+        # Representation layer
+        # if mlp_dim and not distilled:
+        #     self.num_features = mlp_dim
+        #     self.pre_logits = nn.Sequential(OrderedDict([
+        #         ('fc', nn.Linear(dim, mlp_dim)),
+        #         ('act', nn.Tanh())
+        #     ]))
+        # else:
+        self.pre_logits = nn.Identity()
 
         self.mlp_head = nn.Sequential(
             nn.LayerNorm(dim),
@@ -144,10 +162,26 @@ class ViT(nn.Module):
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(mlp_dim, num_classes)
-        )
-
-    def forward(self, img, mask = None):
+        ) if num_classes > 0 else nn.Identity()
         
+        self.mlp_head_dist = None
+        if distilled:            
+            self.mlp_head_dist = nn.Sequential(
+                nn.LayerNorm(dim),
+                nn.Linear(dim, mlp_dim),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(dim, num_classes)
+            ) if num_classes > 0 else nn.Identity()
+            
+        # # Classifier head(s)
+        # self.mlp_head = nn.Linear(self.mlp_dim, num_classes) if num_classes > 0 else nn.Identity()
+        # self.mlp_head_dist = None
+        # if distilled:
+        #     self.mlp_head_dist = nn.Linear(self.dim, self.num_classes) if num_classes > 0 else nn.Identity()
+            
+
+    def forward(self, img, mask = None, training = False):
         ##### Patch Embedding start #####
         p = self.patch_size
 
@@ -163,11 +197,14 @@ class ViT(nn.Module):
         b, n, _ = x.shape
         # print("embedinng x: ", x.shape)  # 16, 64, 512(target dim)
 
-        cls_tokens = self.cls_token.expand(b, -1, -1)
-        # print("cls_tokens", cls_tokens.shape)  # torch.Size([16, 1, 512])
+        cls_token = self.cls_token.expand(b, -1, -1)
+        # print("cls_token", cls_token.shape)  # torch.Size([16, 1, 512])
+        if self.dist_token is None:
+            x = torch.cat((cls_token, x), dim=1)
+        else:
+            x = torch.cat((cls_token, self.dist_token.expand(b, -1, -1), x), dim=1)
 
-        x = torch.cat((cls_tokens, x), dim=1)  # concat
-        x += self.pos_embedding[:, :(n + 1)]  # sum pos embedding
+        x += self.pos_embedding[:, :(n + self.num_tokens)]  # sum pos embedding
         # print("final embedding: ", x.shape)  # torch.Size([16, 65, 512])
         ##### Patch Embedding end #####
         
@@ -178,12 +215,21 @@ class ViT(nn.Module):
         # print ("x[:,0]", x[:,0].shape)  # torch.Size([16, 512])
 
         # x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0]
-        x = self.to_cls_token(x[:, 0])
-        # print("fowarded cls_token", x.shape)  # torch.Size([16, 512]) : only use class token
+        if self.dist_token is None:
+            x = self.pre_logits(x[:, 0])
+            # print("fowarded cls_token", x.shape)  # torch.Size([16, 512]) : only use class token
         
-        rst = self.mlp_head(x)
-        # print("mlp: ", rst.shape)  # torch.Size([16, 10]) --> 10 classes
-
-        return rst
+            rst = self.mlp_head(x)
+            return rst
+            # print("mlp: ", rst.shape)  # torch.Size([16, 10]) --> 10 classes
+        else:
+            x, x_dist = self.mlp_head(x[:, 0]), self.mlp_head_dist(x[:, 1])  # x must be a tuple
+            if training:
+                # print('class shape:', x.shape)  # [16, 10]
+                # print('dist shape:', x_dist.shape)  # [16, 10]
+                # during inference, return the average of both classifier predictions
+                return x, x_dist
+            else:
+                return (x + x_dist) / 2
 
         # return self.mlp_head(x)

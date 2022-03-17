@@ -1,4 +1,5 @@
-# https://github.com/facebookresearch/deit/blob/main/losses.py
+# https://github.com/facebookresearch/deit/blob/35cd4556c06929c59247b828d7dd778b44328fd4/losses.py
+
 # Copyright (c) 2015-present, Facebook, Inc.
 # All rights reserved.
 """
@@ -7,6 +8,7 @@ Implements the knowledge distillation loss
 import torch
 from torch.nn import functional as F
 
+import pdb
 
 class DistillationLoss(torch.nn.Module):
     """
@@ -36,6 +38,8 @@ class DistillationLoss(torch.nn.Module):
         if not isinstance(outputs, torch.Tensor):
             # assume that the model outputs a tuple of [outputs, outputs_kd]
             outputs, outputs_kd = outputs
+            
+        # pdb.set_trace()
         base_loss = self.base_criterion(outputs, labels)
         if self.distillation_type == 'none':
             return base_loss
@@ -47,6 +51,7 @@ class DistillationLoss(torch.nn.Module):
         # don't backprop throught the teacher
         with torch.no_grad():
             teacher_outputs = self.teacher_model(inputs)
+            # print("Teacher Output Dimensions: {}".format(teacher_outputs.size()))
 
         if self.distillation_type == 'soft':
             T = self.tau
